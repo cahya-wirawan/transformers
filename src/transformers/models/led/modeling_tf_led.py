@@ -1451,12 +1451,15 @@ LED_INPUTS_DOCSTRING = r"""
             decoding (see :obj:`past_key_values`). Set to :obj:`False` during training, :obj:`True` during generation
         output_attentions (:obj:`bool`, `optional`):
             Whether or not to return the attentions tensors of all attention layers. See ``attentions`` under returned
-            tensors for more detail.
+            tensors for more detail. This argument can be used only in eager mode, in graph mode the value in the
+            config will be used instead.
         output_hidden_states (:obj:`bool`, `optional`):
             Whether or not to return the hidden states of all layers. See ``hidden_states`` under returned tensors for
-            more detail.
+            more detail. This argument can be used only in eager mode, in graph mode the value in the config will be
+            used instead.
         return_dict (:obj:`bool`, `optional`):
-            Whether or not to return a :class:`~transformers.file_utils.ModelOutput` instead of a plain tuple.
+            Whether or not to return a :class:`~transformers.file_utils.ModelOutput` instead of a plain tuple. This
+            argument can be used in eager mode, in graph mode the value will always be set to True.
         training (:obj:`bool`, `optional`, defaults to :obj:`False`):
             Whether or not to use the model in training mode (some modules like dropout modules have different
             behaviors between training and evaluation).
@@ -1662,7 +1665,6 @@ class TFLEDEncoder(tf.keras.layers.Layer):
     def compute_hidden_states(self, hidden_states, padding_len):
         return hidden_states[:, :-padding_len] if padding_len > 0 else hidden_states
 
-    @tf.function
     def _pad_to_window_size(
         self,
         input_ids,
@@ -1682,26 +1684,28 @@ class TFLEDEncoder(tf.keras.layers.Layer):
         batch_size, seq_len = input_shape[:2]
         padding_len = (attention_window - seq_len % attention_window) % attention_window
 
-        if padding_len > 0:
+        if tf.math.greater(padding_len, 0):
             logger.info(
                 "Input ids are automatically padded from {} to {} to be a multiple of `config.attention_window`: {}".format(
                     seq_len, seq_len + padding_len, attention_window
                 )
             )
 
-            paddings = tf.convert_to_tensor([[0, 0], [0, padding_len]])
+        paddings = tf.convert_to_tensor([[0, 0], [0, padding_len]])
 
-            if input_ids is not None:
-                input_ids = tf.pad(input_ids, paddings, constant_values=pad_token_id)
+        if input_ids is not None:
+            input_ids = tf.pad(input_ids, paddings, constant_values=pad_token_id)
 
-            if inputs_embeds is not None:
+        if inputs_embeds is not None:
+
+            def pad_embeddings():
                 input_ids_padding = tf.fill((batch_size, padding_len), pad_token_id)
                 inputs_embeds_padding = self.embed_tokens(input_ids_padding)
-                inputs_embeds = tf.concat([inputs_embeds, inputs_embeds_padding], axis=-2)
+                return tf.concat([inputs_embeds, inputs_embeds_padding], axis=-2)
 
-            attention_mask = tf.pad(
-                attention_mask, paddings, constant_values=False
-            )  # no attention on the padding tokens
+            inputs_embeds = tf.cond(tf.math.greater(padding_len, 0), pad_embeddings, lambda: inputs_embeds)
+
+        attention_mask = tf.pad(attention_mask, paddings, constant_values=False)  # no attention on the padding tokens
 
         return (
             padding_len,

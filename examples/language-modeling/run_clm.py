@@ -179,8 +179,9 @@ def main():
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO if is_main_process(training_args.local_rank) else logging.WARN,
+        handlers=[logging.StreamHandler(sys.stdout)],
     )
+    logger.setLevel(logging.INFO if is_main_process(training_args.local_rank) else logging.WARN)
 
     # Log on each process the small summary:
     logger.warning(
@@ -226,7 +227,11 @@ def main():
             data_files["train"] = data_args.train_file
         if data_args.validation_file is not None:
             data_files["validation"] = data_args.validation_file
-        extension = data_args.train_file.split(".")[-1]
+        extension = (
+            data_args.train_file.split(".")[-1]
+            if data_args.train_file is not None
+            else data_args.validation_file.split(".")[-1]
+        )
         if extension == "txt":
             extension = "text"
         datasets = load_dataset(extension, data_files=data_files)
@@ -361,12 +366,12 @@ def main():
     # Training
     if training_args.do_train:
         if last_checkpoint is not None:
-            model_path = last_checkpoint
+            checkpoint = last_checkpoint
         elif model_args.model_name_or_path is not None and os.path.isdir(model_args.model_name_or_path):
-            model_path = model_args.model_name_or_path
+            checkpoint = model_args.model_name_or_path
         else:
-            model_path = None
-        train_result = trainer.train(model_path=model_path)
+            checkpoint = None
+        train_result = trainer.train(resume_from_checkpoint=checkpoint)
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
         output_train_file = os.path.join(training_args.output_dir, "train_results.txt")

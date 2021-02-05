@@ -180,8 +180,9 @@ def main():
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
-        level=logging.INFO if is_main_process(training_args.local_rank) else logging.WARN,
+        handlers=[logging.StreamHandler(sys.stdout)],
     )
+    logger.setLevel(logging.INFO if is_main_process(training_args.local_rank) else logging.WARN)
 
     # Log on each process the small summary:
     logger.warning(
@@ -317,7 +318,7 @@ def main():
     if (
         model.config.label2id != PretrainedConfig(num_labels=num_labels).label2id
         and data_args.task_name is not None
-        and is_regression
+        and not is_regression
     ):
         # Some have all caps in their config, some don't.
         label_name_to_id = {k.lower(): v for k, v in model.config.label2id.items()}
@@ -398,12 +399,12 @@ def main():
     # Training
     if training_args.do_train:
         if last_checkpoint is not None:
-            model_path = last_checkpoint
+            checkpoint = last_checkpoint
         elif os.path.isdir(model_args.model_name_or_path):
-            model_path = model_args.model_name_or_path
+            checkpoint = model_args.model_name_or_path
         else:
-            model_path = None
-        train_result = trainer.train(model_path=model_path)
+            checkpoint = None
+        train_result = trainer.train(resume_from_checkpoint=checkpoint)
         metrics = train_result.metrics
 
         trainer.save_model()  # Saves the tokenizer too for easy upload
